@@ -1,0 +1,54 @@
+  WITH 
+  never_ordered_before AS (
+  SELECT customer_id,
+  COUNT(DISTINCT CASE WHEN {{use_case_filter}} THEN order_id END) vertical_orders,
+  COUNT(DISTINCT order_id) breadfast_orders,
+  COUNT(DISTINCT CASE WHEN delivered_at_ltz> '{{anchor_date}}' -90 AND delivered_at_ltz <'{{anchor_date}}' THEN order_id END) AS orders_last_90
+  FROM followbreadfast.l03_marts.fct_orders_products op
+  JOIN followbreadfast.l03_marts.dim_products p ON op.product_id = p.product_id
+  WHERE is_b2c_order
+  AND is_delivered AND op.country_code = 'EG' AND DATE(delivered_at_ltz) < '{{anchor_date}}'
+  GROUP BY 1
+  HAVING vertical_orders = 0 AND orders_last_90 >1 -- Filter on active customers with no penetration on this vertical
+  ), 
+  ordered_after AS (SELECT
+  customer_id
+  FROM followbreadfast.l03_marts.fct_orders_products op
+  JOIN followbreadfast.l03_marts.dim_products USING (product_id)
+  WHERE is_b2c_order
+  AND is_delivered 
+  AND op.country_code = 'EG' 
+  AND {{use_case_filter}} AND
+  DATE(delivered_at_ltz) >= '{{anchor_date}}' AND DATE(delivered_at_ltz) <= DATE_ADD('{{anchor_date}}', INTERVAL 14 DAY)
+  GROUP BY 1
+  ), 
+final_customer_list AS (
+SELECT customer_id, 
+CASE WHEN a.customer_id IS NOT NULL THEN TRUE ELSE FALSE END as converted
+FROM never_ordered_before
+LEFT JOIN ordered_after a USING (customer_id)
+)
+SELECT 
+c.customer_id,
+c.converted, 
+SAFE_DIVIDE(COUNT(DISTINCT case when lower(main_category_name) = 'ready to eat' THEN order_id END),COUNT(DISTINCT order_id)) rte_ratio,
+SAFE_DIVIDE(COUNT(DISTINCT case when lower(main_category_name) = 'ready to eat' AND DATE(delivered_at_ltz) BETWEEN DATE_SUB ('{{anchor_date}}', INTERVAL 7 DAY) AND '{{anchor_date}}'
+THEN order_id END),COUNT(DISTINCT order_id)) rte_ratio_L7,
+SAFE_DIVIDE(COUNT(DISTINCT case when lower(main_category_name) = 'breadfast coffee' THEN order_id END),COUNT(DISTINCT order_id)) coffee_ratio,
+SAFE_DIVIDE(COUNT(DISTINCT case when lower(main_category_name) = 'breadfast coffee' AND DATE(delivered_at_ltz) BETWEEN DATE_SUB ('{{anchor_date}}', INTERVAL 7 DAY) AND '{{anchor_date}}'
+THEN order_id END),COUNT(DISTINCT order_id)) coffee_ratio_L7,
+SUM(order_product_quantity)/COUNT(DISTINCT order_id) AS abs, 
+SUM(order_product_subtotal)/COUNT(DISTINCT order_id) AS aov, 
+COUNT(DISTINCT order_id) AS orders, 
+SAFE_CAST(LEFT(socioeconomic_class, 2) AS INT64) as socioeconomic_class,
+SAFE_DIVIDE(work_addresses_count,(work_addresses_count+household_addresses_count)) AS office_ratio,
+SAFE_CAST(LEFT(customer_premiumness_level, 2) AS INT64) as premium_customer_score,
+DATE_DIFF('{{anchor_date}}', acq_month, month) AS months_since_acquisition
+FROM final_customer_list c 
+JOIN followbreadfast.l03_marts.fct_orders_products o ON c.customer_id = o.customer_id
+JOIN followbreadfast.l03_marts.dim_products p ON o.product_id = p.product_id
+JOIN bf-data-dev-qz06.test_mennaeisawy.customers_segmentation_attributes cs ON cs.customer_id = o.customer_id
+WHERE 
+DATE(delivered_at_ltz) BETWEEN DATE_SUB('{{anchor_date}}', INTERVAL 30 DAY) AND '{{anchor_date}}'
+AND is_b2c_order AND is_delivered AND o.country_code ='EG'
+GROUP BY ALL
