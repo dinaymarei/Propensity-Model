@@ -5,7 +5,7 @@
   COUNT(DISTINCT order_id) breadfast_orders,
   COUNT(DISTINCT CASE WHEN delivered_at_ltz> '{{anchor_date}}' -90 AND delivered_at_ltz <'{{anchor_date}}' THEN order_id END) AS orders_last_90
   FROM followbreadfast.l03_marts.fct_orders_products op
-  JOIN followbreadfast.l03_marts.dim_products p ON op.product_id = p.product_id
+  LEFT JOIN followbreadfast.l03_marts.dim_products p ON op.product_id = p.product_id
   WHERE is_b2c_order
   AND is_delivered AND op.country_code = 'EG' AND DATE(delivered_at_ltz) < '{{anchor_date}}'
   GROUP BY 1
@@ -14,7 +14,7 @@
   ordered_after AS (SELECT
   customer_id
   FROM followbreadfast.l03_marts.fct_orders_products op
-  JOIN followbreadfast.l03_marts.dim_products USING (product_id)
+  LEFT JOIN followbreadfast.l03_marts.dim_products USING (product_id)
   WHERE is_b2c_order
   AND is_delivered 
   AND op.country_code = 'EG' 
@@ -56,15 +56,38 @@ COUNT(DISTINCT product_id) AS unique_products_viewed_in_cat
 FROM followbreadfast.breadfast_app_production.product_viewed
 JOIN followbreadfast.l03_marts.dim_products using (product_id)
 WHERE DATE(sent_at, 'Africa/Cairo') BETWEEN '{{anchor_date}}' -90 AND '{{anchor_date}}'
-GROUP BY 1
+GROUP BY ALL
 ), 
 customer_search_results AS (
 SELECT customer_id, 
-SAFE_DIVIDE(COUNT(DISTINCT case when {{use_case_filter}} THEN search_session_key END),COUNT(DISTINCT search_session_key)) as search_to_pdp_ratio
+0 as search_to_pdp_ratio
+-- SAFE_DIVIDE(COUNT(DISTINCT case when {{use_case_filter}} THEN search_session_key END),COUNT(DISTINCT search_session_key)) as search_to_pdp_ratio
 FROM followbreadfast.l03_marts.fct_search_product_events
 JOIN followbreadfast.l03_marts.dim_products USING (product_id)
 WHERE DATE(search_request_sent_at_ltz) BETWEEN '{{anchor_date}}'-90 AND '{{anchor_date}}'
-GROUP BY 1
+GROUP BY ALL
+), 
+customer_fp_count AS (
+  SELECT customer_id, 
+  fp_name , 
+  COUNT(*) AS fp_count
+  FROM followbreadfast.l03_marts.fct_orders
+  WHERE is_b2c_order AND is_delivered AND country_code = 'EG' AND DATE(delivered_at_ltz) BETWEEN DATE_SUB('{{anchor_date}}', INTERVAL 90 DAY) AND '{{anchor_date}}'
+  GROUP BY 1,2
+), 
+customer_primary_fp_helper AS (
+  SELECT customer_id, 
+  fp_name,
+  fp_count,
+  RANK() OVER (PARTITION BY customer_id ORDER BY fp_count DESC) AS fp_rank,
+  FROM customer_fp_count
+  GROUP BY 1,2,3
+), 
+customer_primary_fp AS (
+  SELECT customer_id, 
+  fp_name AS primary_fp
+  FROM customer_primary_fp_helper
+  WHERE fp_rank = 1
 )
 SELECT 
 c.customer_id,
@@ -74,6 +97,7 @@ SAFE_CAST(LEFT(socioeconomic_class, 2) AS INT64) as socioeconomic_class,
 is_student_parent
 is_baby_parent, 
 is_pet_owner,
+primary_fp,
 CASE WHEN gender = 'Female' then TRUE ELSE FALSE END AS is_female, 
 SAFE_DIVIDE(work_addresses_count,(work_addresses_count+household_addresses_count)) AS office_ratio,
 
@@ -110,11 +134,12 @@ search_to_pdp_ratio
 
 FROM final_customer_list c 
 JOIN followbreadfast.l03_marts.fct_orders_products o ON c.customer_id = o.customer_id
-JOIN followbreadfast.l03_marts.dim_products p ON o.product_id = p.product_id
+LEFT JOIN followbreadfast.l03_marts.dim_products p ON o.product_id = p.product_id
 LEFT JOIN bf-data-dev-qz06.test_mennaeisawy.customers_segmentation_attributes cs ON cs.customer_id = o.customer_id
 LEFT JOIN customer_events_data as e on e.customer_id = c.customer_id
 LEFT JOIN customer_search_results as s on s.customer_id = c.customer_id
 LEFT JOIN price_volatility As pv on pv.customer_id = c.customer_id
+LEFT JOIN customer_primary_fp AS pf ON pf.customer_id = c.customer_id
 WHERE 
 DATE(delivered_at_ltz) BETWEEN DATE_SUB('{{anchor_date}}', INTERVAL 90 DAY) AND '{{anchor_date}}'
 AND is_b2c_order AND is_delivered AND o.country_code ='EG'

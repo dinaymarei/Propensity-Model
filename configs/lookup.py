@@ -1,5 +1,5 @@
 VERTICAL_LOOKUP = {
-    "food": "main_category_name = 'Hot Food'",
+    "food": "order_vertical = 'restaurant'",
     "beauty": "main_category_name = 'Fragrances & Beauty'",
     "shops": "order_vertical = 'Shops'"
 }
