@@ -1,19 +1,32 @@
-import pandas as pd 
+import pandas as pd
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import train_test_split
-import numpy as np
 import joblib
 from pathlib import Path
 from xgboost import XGBClassifier
+from google.cloud import bigquery
+from configs.lookup import BQ_PROJECT, BQ_DATASET
 
-def run_model(df, anchor_date, usecase):
-    X = df.drop(columns=["customer_id", "converted"]) 
-    y= df["converted"]
-    y_test = df["converted"]
-    X_test = X
 
-    if (not Path(f"output/xgb_{anchor_date}.pkl").exists()):
+def _write_to_bq(df: pd.DataFrame, table: str):
+    client = bigquery.Client(project=BQ_PROJECT)
+    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
+    client.load_table_from_dataframe(df, f"{BQ_DATASET}.{table}", job_config=job_config).result()
+
+
+def run_model(df: pd.DataFrame, anchor_date: str, mode: str = "train"):
+    drop_cols = ["customer_id", "converted", "primary_fp"]
+    X = df.drop(columns=[c for c in drop_cols if c in df.columns])
+    y = df["converted"]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42
+    )
+
+    model_path = Path(f"output/xgb_{anchor_date}.pkl")
+
+    if mode == "train" or not model_path.exists():
         pipe = Pipeline([
             ("imputer", SimpleImputer(strategy="median")),
             ("model", XGBClassifier(
@@ -26,31 +39,32 @@ def run_model(df, anchor_date, usecase):
                 eval_metric="auc",
                 n_jobs=-1,
                 random_state=42,
-            ))
+            )),
         ])
+        pipe.fit(X_train, y_train)
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.3, random_state=42
-        )
+        importance_df = pd.DataFrame({
+            "anchor_date": anchor_date,
+            "feature": X_train.columns,
+            "importance": pipe.named_steps["model"].feature_importances_,
+        })
+        _write_to_bq(importance_df, "xgb_feature_importance")
 
-        pipe.fit(X_train,y_train)
+        joblib.dump(pipe, model_path)
 
-        # Feature importance
-        importance = pipe.named_steps["model"].feature_importances_
-        coef_df = pd.DataFrame({"feature": X_train.columns, "importance": importance})
-        coef_df.to_csv(f"importance/xgb_{anchor_date}.csv", index=False)
+    else:
+        pipe = joblib.load(model_path)
 
-    else: 
-    # Load model
-        pipe = joblib.load(f"output/{anchor_date}.pkl")
-        print("Model loaded from cache")
+    y_proba = pipe.predict_proba(X_test)[:, 1]
+    y_pred = (y_proba > 0.5).astype(int)
 
+    predictions = pd.DataFrame({
+        "anchor_date": anchor_date,
+        "customer_id": df.loc[X_test.index, "customer_id"],
+        "actual_converted": y_test.values,
+        "predicted_converted": y_pred,
+        "predicted_probability": y_proba,
+    })
+    _write_to_bq(predictions, "xgb_predictions")
 
-    # Prediction Accuracy 
-    y_pred = pipe.predict(X_test)
-    y_proba = pipe.predict_proba(X_test)[:,1]
-
-
-    # Save model
-    joblib.dump(pipe, f"output/xgb_{anchor_date}.pkl")
     return y_test, y_pred, y_proba, pipe

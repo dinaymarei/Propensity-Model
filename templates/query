@@ -1,146 +1,144 @@
-  WITH 
-  never_ordered_before AS (
-  SELECT customer_id,
-  COUNT(DISTINCT CASE WHEN {{use_case_filter}} THEN order_id END) vertical_orders,
-  COUNT(DISTINCT order_id) breadfast_orders,
-  COUNT(DISTINCT CASE WHEN delivered_at_ltz> '{{anchor_date}}' -90 AND delivered_at_ltz <'{{anchor_date}}' THEN order_id END) AS orders_last_90
+WITH
+never_ordered_before AS (
+  SELECT
+    customer_id,
+    COUNT(DISTINCT CASE WHEN {{use_case_filter}} AND DATE(delivered_at_ltz) < '{{anchor_date}}' THEN order_id END) AS vertical_orders,
+    COUNT(DISTINCT order_id) AS breadfast_orders,
+    COUNT(DISTINCT CASE WHEN DATE(delivered_at_ltz) >= DATE_SUB('{{anchor_date}}', INTERVAL 90 DAY) AND DATE(delivered_at_ltz) < '{{anchor_date}}' THEN order_id END) AS orders_last_90
   FROM followbreadfast.l03_marts.fct_orders_products op
   LEFT JOIN followbreadfast.l03_marts.dim_products p ON op.product_id = p.product_id
   WHERE is_b2c_order
-  AND is_delivered AND op.country_code = 'EG' AND DATE(delivered_at_ltz) < '{{anchor_date}}'
+    AND is_delivered
+    AND op.country_code = 'EG'
   GROUP BY 1
-  HAVING vertical_orders = 0 AND orders_last_90 >1 -- Filter on active customers with no penetration on this vertical
-  ), 
-  ordered_after AS (SELECT
-  customer_id
+  HAVING vertical_orders = 0 AND orders_last_90 >= 1
+),
+
+ordered_after AS (
+  SELECT customer_id
   FROM followbreadfast.l03_marts.fct_orders_products op
   LEFT JOIN followbreadfast.l03_marts.dim_products USING (product_id)
   WHERE is_b2c_order
-  AND is_delivered 
-  AND op.country_code = 'EG' 
-  AND {{use_case_filter}}  AND
-  DATE(delivered_at_ltz) >= '{{anchor_date}}' AND DATE(delivered_at_ltz) <= DATE_ADD('{{anchor_date}}', INTERVAL 14 DAY)
+    AND is_delivered
+    AND op.country_code = 'EG'
+    AND {{use_case_filter}}
+    AND DATE(delivered_at_ltz) >= '{{anchor_date}}'
+    AND DATE(delivered_at_ltz) <= DATE_ADD('{{anchor_date}}', INTERVAL 14 DAY)
   GROUP BY 1
-  ), 
+),
+
 final_customer_list AS (
-SELECT customer_id, 
-CASE WHEN a.customer_id IS NOT NULL THEN TRUE ELSE FALSE END as converted
-FROM never_ordered_before
-LEFT JOIN ordered_after a USING (customer_id)
-), 
+  SELECT
+    customer_id,
+    CASE WHEN a.customer_id IS NOT NULL THEN TRUE ELSE FALSE END AS converted
+  FROM never_ordered_before
+  LEFT JOIN ordered_after a USING (customer_id)
+),
+
 order_agg AS (
-SELECT
-  customer_id,
-  order_id,
-  SUM(order_product_subtotal) AS order_value,
-  SUM(order_product_quantity) AS basket_size
+  SELECT
+    customer_id,
+    order_id,
+    SUM(order_product_subtotal) AS order_value,
+    SUM(order_product_quantity) AS basket_size
   FROM followbreadfast.l03_marts.fct_orders_products
   WHERE DATE(delivered_at_ltz) BETWEEN DATE_SUB('{{anchor_date}}', INTERVAL 90 DAY) AND '{{anchor_date}}'
-  AND is_b2c_order
-  AND is_delivered
-  AND country_code = 'EG'
-  GROUP BY 1,2
-), 
+    AND is_b2c_order
+    AND is_delivered
+    AND country_code = 'EG'
+  GROUP BY 1, 2
+),
+
 price_volatility AS (
   SELECT
-  customer_id,
-  STDDEV(order_value) AS order_value_stddev, 
-  MAX(order_value) AS max_order_value, 
-  STDDEV(basket_size) AS basket_size_stddev
+    customer_id,
+    STDDEV(order_value) AS order_value_stddev,
+    MAX(order_value) AS max_order_value,
+    STDDEV(basket_size) AS basket_size_stddev
   FROM order_agg
   GROUP BY 1
 ),
+
 customer_events_data AS (
-SELECT CAST(user_id AS INT64) as customer_id, COUNT(DISTINCT id) as unique_views_in_cat,
-COUNT(DISTINCT product_id) AS unique_products_viewed_in_cat
-FROM followbreadfast.breadfast_app_production.product_viewed
-JOIN followbreadfast.l03_marts.dim_products using (product_id)
-WHERE DATE(sent_at, 'Africa/Cairo') BETWEEN '{{anchor_date}}' -90 AND '{{anchor_date}}'
-GROUP BY ALL
-), 
+  SELECT
+    CAST(user_id AS INT64) AS customer_id,
+    COUNT(DISTINCT id) AS unique_views_in_cat,
+    COUNT(DISTINCT product_id) AS unique_products_viewed_in_cat
+  FROM followbreadfast.breadfast_app_production.product_viewed
+  JOIN followbreadfast.l03_marts.dim_products USING (product_id)
+  WHERE DATE(sent_at, 'Africa/Cairo') BETWEEN DATE_SUB('{{anchor_date}}', INTERVAL 90 DAY) AND '{{anchor_date}}'
+    AND {{use_case_filter}}
+  GROUP BY ALL
+),
+
 customer_search_results AS (
-SELECT customer_id, 
-0 as search_to_pdp_ratio
--- SAFE_DIVIDE(COUNT(DISTINCT case when {{use_case_filter}} THEN search_session_key END),COUNT(DISTINCT search_session_key)) as search_to_pdp_ratio
-FROM followbreadfast.l03_marts.fct_search_product_events
-JOIN followbreadfast.l03_marts.dim_products USING (product_id)
-WHERE DATE(search_request_sent_at_ltz) BETWEEN '{{anchor_date}}'-90 AND '{{anchor_date}}'
-GROUP BY ALL
-), 
-customer_fp_count AS (
-  SELECT customer_id, 
-  fp_name , 
-  COUNT(*) AS fp_count
-  FROM followbreadfast.l03_marts.fct_orders
-  WHERE is_b2c_order AND is_delivered AND country_code = 'EG' AND DATE(delivered_at_ltz) BETWEEN DATE_SUB('{{anchor_date}}', INTERVAL 90 DAY) AND '{{anchor_date}}'
-  GROUP BY 1,2
-), 
-customer_primary_fp_helper AS (
-  SELECT customer_id, 
-  fp_name,
-  fp_count,
-  RANK() OVER (PARTITION BY customer_id ORDER BY fp_count DESC) AS fp_rank,
-  FROM customer_fp_count
-  GROUP BY 1,2,3
-), 
-customer_primary_fp AS (
-  SELECT customer_id, 
-  fp_name AS primary_fp
-  FROM customer_primary_fp_helper
-  WHERE fp_rank = 1
+  SELECT
+    customer_id,
+    SAFE_DIVIDE(
+      COUNT(DISTINCT CASE WHEN {{use_case_filter}} THEN search_session_key END),
+      COUNT(DISTINCT search_session_key)
+    ) AS search_to_pdp_ratio
+  FROM followbreadfast.l03_marts.fct_search_product_events
+  JOIN followbreadfast.l03_marts.dim_products USING (product_id)
+  WHERE DATE(search_request_sent_at_ltz) BETWEEN DATE_SUB('{{anchor_date}}', INTERVAL 90 DAY) AND '{{anchor_date}}'
+  GROUP BY ALL
 )
-SELECT 
-c.customer_id,
-c.converted, 
--- Customer Profile & Demographics
-SAFE_CAST(LEFT(socioeconomic_class, 2) AS INT64) as socioeconomic_class,
-is_student_parent
-is_baby_parent, 
-is_pet_owner,
-primary_fp,
-CASE WHEN gender = 'Female' then TRUE ELSE FALSE END AS is_female, 
-SAFE_DIVIDE(work_addresses_count,(work_addresses_count+household_addresses_count)) AS office_ratio,
 
+SELECT
+  c.customer_id,
+  c.converted,
 
--- Customer Tenure/Lifecycle 
-DATE_DIFF('{{anchor_date}}', acq_month, month) AS months_since_acquisition,
+  -- Customer Profile & Demographics
+  SAFE_CAST(LEFT(socioeconomic_class, 2) AS INT64) AS socioeconomic_class,
+  is_student_parent,
+  is_baby_parent,
+  is_pet_owner,
+  CASE WHEN gender = 'Female' THEN TRUE ELSE FALSE END AS is_female,
+  COUNT(DISTINCT CASE WHEN LOWER(a.address_label_tag) != 'household' THEN o.order_id END) / COUNT(DISTINCT o.order_id) AS office_ratio,
 
---Purchase Power & Shopping Capacity 
-MAX(order_value_stddev) as order_value_stddev,
-MAX(basket_size_stddev) AS basket_size_stddev,
-MAX(max_order_value) as maximum_order_value,
+  -- Customer Tenure/Lifecycle
+  DATE_DIFF('{{anchor_date}}', acq_month, MONTH) AS months_since_acquisition,
 
-COUNT(DISTINCT order_id) AS total_orders,
-MAX(o.sale_price) as maximum_price_point, 
-SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN has_coupon = TRUE then order_id ELSE NULL END), COUNT(DISTINCT order_id)) as orders_with_discount_ratio,
+  -- Purchase Power & Shopping Capacity
+  MAX(order_value_stddev) AS order_value_stddev,
+  MAX(basket_size_stddev) AS basket_size_stddev,
+  MAX(max_order_value) AS maximum_order_value,
+  COUNT(DISTINCT o.order_id) AS total_orders,
+  MAX(o.order_product_subtotal) AS maximum_price_point,
+  MAX(o.order_product_subtotal) / AVG(o.order_product_subtotal) AS item_spend_flexibility,
 
-SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN EXTRACT(DAYOFWEEK FROM DATE(o.created_at_ltz)) IN (5, 6) 
- then order_id ELSE NULL END), COUNT(DISTINCT order_id)) as weekend_order_ratio,
+  SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN has_coupon = TRUE THEN o.order_id END), COUNT(DISTINCT o.order_id)) AS orders_with_discount_ratio,
+  SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN EXTRACT(DAYOFWEEK FROM DATE(o.created_at_ltz)) IN (5, 6) THEN o.order_id END), COUNT(DISTINCT o.order_id)) AS weekend_order_ratio,
+  SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN EXTRACT(HOUR FROM o.created_at_ltz) >= 18 THEN o.order_id END), COUNT(DISTINCT o.order_id)) AS night_order_ratio,
 
-SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN EXTRACT(HOUR FROM o.created_at_ltz) >=18
- then order_id ELSE NULL END), COUNT(DISTINCT order_id)) as night_order_ratio,
+  SUM(o.order_product_quantity) / COUNT(DISTINCT o.order_id) AS abs,
+  SUM(o.order_product_subtotal) / COUNT(DISTINCT o.order_id) AS aov,
 
-SUM(order_product_quantity)/COUNT(DISTINCT order_id) AS abs, 
-SUM(order_product_subtotal)/COUNT(DISTINCT order_id) AS aov, 
+  -- Category Affinity Flags
+  CASE WHEN COUNT(DISTINCT CASE WHEN LOWER(main_category_name) = 'ready to eat' THEN o.order_id END) > 0 THEN TRUE ELSE FALSE END AS ordered_rte,
+  CASE WHEN COUNT(DISTINCT CASE WHEN LOWER(main_category_name) = 'breadfast coffee' THEN o.order_id END) > 0 THEN TRUE ELSE FALSE END AS ordered_coffee,
+  CASE WHEN COUNT(DISTINCT CASE WHEN LOWER(main_category_name) = 'health & wellness' THEN o.order_id END) > 0 THEN TRUE ELSE FALSE END AS ordered_h_and_w,
+  CASE WHEN COUNT(DISTINCT CASE WHEN LOWER(main_category_name) IN ('household cleaning', 'baby products') THEN o.order_id END) > 0 THEN TRUE ELSE FALSE END AS ordered_cleaning_baby_products,
 
--- Cross Category Affinity
-SAFE_DIVIDE(COUNT(DISTINCT case when lower(main_category_name) = 'ready to eat' THEN order_id END),COUNT(DISTINCT order_id)) rte_ratio,
-SAFE_DIVIDE(COUNT(DISTINCT case when lower(main_category_name) = 'breadfast coffee' THEN order_id END),COUNT(DISTINCT order_id)) coffee_ratio,
-SAFE_DIVIDE(COUNT(DISTINCT case when lower(main_category_name) = 'health & wellness' THEN order_id END),COUNT(DISTINCT order_id)) health_and_wellness_ratio,
+  -- Cross-Category Ratios
+  SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN LOWER(main_category_name) = 'ready to eat' THEN o.order_id END), COUNT(DISTINCT o.order_id)) AS rte_ratio,
+  SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN LOWER(main_category_name) = 'breadfast coffee' THEN o.order_id END), COUNT(DISTINCT o.order_id)) AS coffee_ratio,
+  SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN LOWER(main_category_name) = 'health & wellness' THEN o.order_id END), COUNT(DISTINCT o.order_id)) AS health_and_wellness_ratio,
 
-unique_views_in_cat, 
-unique_products_viewed_in_cat, 
-search_to_pdp_ratio
+  unique_views_in_cat,
+  unique_products_viewed_in_cat,
+  search_to_pdp_ratio
 
-FROM final_customer_list c 
+FROM final_customer_list c
 JOIN followbreadfast.l03_marts.fct_orders_products o ON c.customer_id = o.customer_id
 LEFT JOIN followbreadfast.l03_marts.dim_products p ON o.product_id = p.product_id
+LEFT JOIN followbreadfast.l03_marts.dim_addresses a ON a.address_id = o.address_id
 LEFT JOIN bf-data-dev-qz06.test_mennaeisawy.customers_segmentation_attributes cs ON cs.customer_id = o.customer_id
-LEFT JOIN customer_events_data as e on e.customer_id = c.customer_id
-LEFT JOIN customer_search_results as s on s.customer_id = c.customer_id
-LEFT JOIN price_volatility As pv on pv.customer_id = c.customer_id
-LEFT JOIN customer_primary_fp AS pf ON pf.customer_id = c.customer_id
-WHERE 
-DATE(delivered_at_ltz) BETWEEN DATE_SUB('{{anchor_date}}', INTERVAL 90 DAY) AND '{{anchor_date}}'
-AND is_b2c_order AND is_delivered AND o.country_code ='EG'
+LEFT JOIN customer_events_data e ON e.customer_id = c.customer_id
+LEFT JOIN customer_search_results s ON s.customer_id = c.customer_id
+LEFT JOIN price_volatility pv ON pv.customer_id = c.customer_id
+WHERE DATE(delivered_at_ltz) BETWEEN DATE_SUB('{{anchor_date}}', INTERVAL 90 DAY) AND '{{anchor_date}}'
+  AND is_b2c_order
+  AND is_delivered
+  AND o.country_code = 'EG'
 GROUP BY ALL

@@ -1,0 +1,189 @@
+WITH
+customer_fp_count AS (
+  SELECT
+    o.customer_id,
+    o.fp_name,
+    COUNT(o.order_id) AS fp_count,
+    MAX(o.delivered_at_ltz) AS last_order_date
+  FROM followbreadfast.l03_marts.fct_orders AS o
+  WHERE is_b2c_order
+    AND is_delivered
+    AND country_code = 'EG'
+    AND DATE(delivered_at_ltz) BETWEEN DATE_SUB(DATE('{{anchor_date}}'), INTERVAL 30 DAY) AND DATE('{{anchor_date}}')
+  GROUP BY 1, 2
+),
+
+customer_primary_fp AS (
+  SELECT customer_id, fp_name AS primary_fp
+  FROM (
+    SELECT
+      customer_id,
+      fp_name,
+      ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY fp_count DESC, last_order_date DESC) AS fp_rank
+    FROM customer_fp_count
+  )
+  WHERE fp_rank = 1
+),
+
+events_data AS (
+  SELECT
+    CAST(user_id AS INT64) AS customer_id,
+    COUNT(DISTINCT id) AS unique_vertical_views
+  FROM followbreadfast.breadfast_app_production.vertical_opened
+  WHERE DATE(sent_at, 'Africa/Cairo') BETWEEN DATE_SUB(DATE('{{anchor_date}}'), INTERVAL 30 DAY) AND DATE('{{anchor_date}}')
+    AND vertical = 'Restaurants'
+  GROUP BY ALL
+),
+
+never_ordered_before AS (
+  SELECT
+    customer_id,
+    COUNT(DISTINCT CASE WHEN order_vertical = 'restaurant' AND DATE(delivered_at_ltz) < DATE('{{anchor_date}}') THEN order_id END) AS vertical_orders_before,
+    COUNT(DISTINCT CASE WHEN DATE(delivered_at_ltz) >= DATE('{{anchor_date}}') AND DATE(delivered_at_ltz) <= DATE_ADD(DATE('{{anchor_date}}'), INTERVAL 14 DAY) AND order_vertical = 'restaurant' THEN order_id END) AS vertical_orders_after,
+    COUNT(DISTINCT order_id) AS breadfast_orders,
+    COUNT(DISTINCT CASE WHEN DATE(delivered_at_ltz) BETWEEN DATE_SUB(DATE('{{anchor_date}}'), INTERVAL 30 DAY) AND DATE('{{anchor_date}}') THEN order_id END) AS orders_last_30
+  FROM followbreadfast.l03_marts.fct_orders_products op
+  LEFT JOIN followbreadfast.l03_marts.dim_products p ON op.product_id = p.product_id
+  WHERE is_b2c_order
+    AND is_delivered
+    AND op.country_code = 'EG'
+  GROUP BY 1
+  HAVING vertical_orders_before = 0 AND orders_last_30 > 0
+),
+
+base AS (
+  SELECT
+    op.customer_id,
+    op.order_id,
+    cpf.primary_fp,
+    nob.vertical_orders_after,
+    op.has_coupon,
+    DATE(op.delivered_at_ltz) AS order_date,
+    op.delivered_at_ltz,
+    op.order_product_subtotal,
+    op.order_product_quantity,
+    LOWER(p.main_category_name) AS main_category_name,
+    LOWER(a.address_label_tag) AS address_label_tag,
+    c.gender,
+    EXTRACT(DAYOFWEEK FROM DATE(op.created_at_ltz)) AS dow,
+    EXTRACT(HOUR FROM op.created_at_ltz) AS hour,
+    ed.unique_vertical_views,
+    RANK() OVER (PARTITION BY op.customer_id ORDER BY op.delivered_at_ltz DESC) AS rank_desc
+  FROM followbreadfast.l03_marts.fct_orders_products op
+  JOIN never_ordered_before nob USING (customer_id)
+  LEFT JOIN events_data ed USING (customer_id)
+  LEFT JOIN followbreadfast.l03_marts.dim_products p ON op.product_id = p.product_id
+  LEFT JOIN followbreadfast.l03_marts.dim_addresses a ON op.address_id = a.address_id
+  LEFT JOIN followbreadfast.l03_marts.dim_customers c ON c.customer_id = op.customer_id
+  LEFT JOIN customer_primary_fp cpf ON cpf.customer_id = op.customer_id
+  WHERE op.is_b2c_order
+    AND op.is_delivered
+    AND op.country_code = 'EG'
+    AND DATE(op.delivered_at_ltz) BETWEEN DATE_SUB(DATE('{{anchor_date}}'), INTERVAL 30 DAY) AND DATE('{{anchor_date}}')
+),
+
+order_level AS (
+  SELECT
+    customer_id,
+    order_id,
+    MAX(has_coupon) AS has_coupon,
+    MAX(delivered_at_ltz) AS order_date,
+    MAX(rank_desc) AS rank_desc,
+    SUM(order_product_quantity) AS basket_size,
+    SUM(order_product_subtotal) AS order_value,
+    COUNT(DISTINCT main_category_name) AS cats_in_order,
+    MAX(CASE WHEN address_label_tag != 'household' THEN 1 ELSE 0 END) AS is_office_order
+  FROM base
+  GROUP BY 1, 2
+),
+
+coupon_sent AS (
+  SELECT CAST(user_id AS INT64) AS customer_id
+  FROM followbreadfast.landing_airbyte_eg_core_mysql_prod.bf_braze_sms s
+  JOIN followbreadfast.l03_marts.dim_coupons c ON LOWER(c.coupon_code) = LOWER(s.coupon_code)
+  WHERE coupon_vertical = 'restaurant'
+    AND DATE(s.created_at) BETWEEN DATE_SUB(DATE('{{anchor_date}}'), INTERVAL 30 DAY) AND DATE('{{anchor_date}}')
+  GROUP BY ALL
+),
+
+agg_averages AS (
+  SELECT
+    customer_id,
+    MIN(o.basket_size) AS min_basket_size,
+    MAX(o.basket_size) AS max_basket_size,
+    AVG(o.basket_size) AS avg_basket_size,
+    STDDEV(o.basket_size) AS basket_size_stddev,
+    AVG(o.order_value) AS aov,
+    STDDEV(o.order_value) AS order_value_stddev,
+    MAX(o.order_value) AS max_order_value,
+    MAX(CASE WHEN o.rank_desc = 1 THEN o.order_value END) AS last_order_value,
+    DATE_DIFF(DATE('{{anchor_date}}'), MAX(DATE(o.order_date)), DAY) AS days_since_last_order,
+    MAX(CASE WHEN o.rank_desc = 1 THEN o.basket_size END) AS last_order_basket_size,
+    AVG(o.cats_in_order) AS average_cats_per_order,
+    MAX(CASE WHEN o.rank_desc = 1 THEN o.is_office_order END) AS is_last_order_from_office,
+    MAX(CASE WHEN o.rank_desc = 1 THEN EXTRACT(DAYOFWEEK FROM order_date) NOT IN (6, 7) END) AS is_last_order_weekday,
+    MAX(CASE WHEN o.rank_desc = 1 THEN EXTRACT(HOUR FROM order_date) IN (16, 17, 18, 19) END) AS is_last_order_peak_hours,
+    AVG(o.is_office_order) AS office_ratio,
+    COUNT(DISTINCT o.order_id) / 3 AS orders_per_month,
+    COUNT(DISTINCT o.order_id) / 12 AS orders_per_week,
+    COUNT(DISTINCT CASE WHEN o.has_coupon = TRUE THEN o.order_id END) / COUNT(DISTINCT o.order_id) AS perc_orders_with_discount
+  FROM order_level o
+  GROUP BY customer_id
+),
+
+product_averages AS (
+  SELECT
+    customer_id,
+    primary_fp,
+    COUNT(DISTINCT CASE WHEN b.main_category_name = 'ready to eat' THEN b.order_id END) / COUNT(DISTINCT b.order_id) AS rte_ratio,
+    COUNT(DISTINCT CASE WHEN b.main_category_name = 'breadfast coffee' THEN b.order_id END) / COUNT(DISTINCT b.order_id) AS coffee_ratio,
+    MAX(CASE WHEN b.rank_desc = 1 AND b.main_category_name = 'breadfast coffee' THEN 1 ELSE 0 END) AS last_order_contains_coffee,
+    MAX(CASE WHEN b.rank_desc = 1 AND b.main_category_name = 'ready to eat' THEN 1 ELSE 0 END) AS last_order_contains_rte,
+    MAX(CASE WHEN b.vertical_orders_after > 0 THEN 1 ELSE 0 END) AS converted,
+    MAX(CASE WHEN b.gender = 'Female' THEN 1 ELSE 0 END) AS is_female,
+    MAX(CASE WHEN b.main_category_name = 'breadfast coffee' THEN 1 ELSE 0 END) AS bought_coffee,
+    MAX(CASE WHEN b.main_category_name = 'ready to eat' THEN 1 ELSE 0 END) AS bought_rte,
+    MAX(b.order_product_subtotal) AS maximum_item_price,
+    MAX(b.order_product_subtotal) / AVG(b.order_product_subtotal) AS item_spend_flexibility
+  FROM base b
+  GROUP BY customer_id, primary_fp
+)
+
+SELECT
+  a.customer_id,
+  primary_fp,
+  converted,
+  is_female,
+  bought_coffee,
+  bought_rte,
+  rte_ratio,
+  coffee_ratio,
+  last_order_contains_coffee,
+  last_order_contains_rte,
+  min_basket_size,
+  max_basket_size,
+  avg_basket_size,
+  basket_size_stddev,
+  order_value_stddev,
+  aov,
+  max_order_value,
+  last_order_value,
+  days_since_last_order,
+  last_order_basket_size,
+  average_cats_per_order,
+  is_last_order_from_office,
+  is_last_order_weekday,
+  is_last_order_peak_hours,
+  office_ratio,
+  maximum_item_price,
+  item_spend_flexibility,
+  orders_per_month,
+  orders_per_week,
+  perc_orders_with_discount
+FROM agg_averages a
+JOIN product_averages p ON a.customer_id = p.customer_id
+LEFT JOIN coupon_sent cs ON cs.customer_id = a.customer_id
+{% if fps %}
+WHERE primary_fp IN ({{ fps | map('tojson') | join(', ') }})
+{% endif %}
+GROUP BY ALL

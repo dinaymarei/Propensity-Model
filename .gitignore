@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+
+# macOS
+.DS_Store
+
+# Model artifacts
+output/*.pkl
+
+# Cached input data
+input/
+
+# Results & importance (written to BQ, not needed in git)
+results/
+importance/
+
+# Jupyter
+.ipynb_checkpoints/

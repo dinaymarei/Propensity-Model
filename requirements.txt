@@ -1,0 +1,11 @@
+google-cloud-bigquery
+google-cloud-bigquery-storage
+pandas
+pandas-gbq
+pyarrow
+scikit-learn
+xgboost
+jinja2
+joblib
+numpy
+tabulate
