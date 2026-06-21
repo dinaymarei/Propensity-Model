@@ -1,30 +1,42 @@
 import argparse
+import logging
+from datetime import date
+
 from .render import render
-from accuracy.accuracy import score
-from configs.lookup import FOOD_FPS
+from core.accuracy import score as accuracy_score
+from models.logistic_regression import train, score, analyze
 
 
-def main(anchor_date: str, model: str, use_case: str, mode: str):
-    fps = FOOD_FPS if use_case == "food" else None
-    df = render(anchor_date=anchor_date, use_case=use_case, fps=fps)
+def main(anchor_date: str, use_case: str, mode: str):
+    logger = logging.getLogger(__name__)
+    logger.info("Starting | use_case=%s | anchor_date=%s | mode=%s", use_case, anchor_date, mode)
 
-    if model == "logistic":
-        from models.logistic_regression import run_model
-    elif model == "xgboost":
-        from models.xgboost import run_model
-    else:
-        raise ValueError("Model must be 'logistic' or 'xgboost'")
+    df = render(anchor_date=anchor_date, use_case=use_case)
 
-    y_test, y_pred, y_proba, pipe = run_model(df, anchor_date, mode=mode)
-    score(model, y_test, y_pred, y_proba, anchor_date, use_case, fps)
+    if mode == "train":
+        y_test, y_pred, y_proba = train(df, anchor_date, use_case)
+        accuracy_score("model", y_test, y_pred, y_proba, anchor_date, use_case)
+
+    elif mode == "score":
+        score(df, anchor_date, use_case)
+
+    elif mode == "analyze":
+        analyze(df, anchor_date, use_case)
+
+    logger.info("Done | use_case=%s | anchor_date=%s | mode=%s", use_case, anchor_date, mode)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--anchor-date", required=True)
-    parser.add_argument("--model", required=True, choices=["logistic", "xgboost"])
+    parser.add_argument("--anchor-date", default=date.today().isoformat(), help="Anchor date for data extraction (format: YYYY-MM-DD)")
     parser.add_argument("--use-case", default="beauty", choices=["beauty", "food", "shops"])
-    parser.add_argument("--mode", default="train", choices=["train", "evaluate"])
+    parser.add_argument("--mode", default="train", choices=["train", "score", "analyze"])
 
     args = parser.parse_args()
-    main(args.anchor_date, args.model, args.use_case, args.mode)
+    main(args.anchor_date, args.use_case, args.mode)

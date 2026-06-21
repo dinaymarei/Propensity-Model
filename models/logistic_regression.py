@@ -1,3 +1,4 @@
+import logging
 import pandas as pd
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
@@ -5,77 +6,109 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 import numpy as np
 import joblib
-from pathlib import Path
 from sklearn.linear_model import LogisticRegression
 from sklearn.inspection import permutation_importance
-from google.cloud import bigquery
-from configs.lookup import BQ_PROJECT, BQ_DATASET
+from tabulate import tabulate
+from configs.lookup import BQ_PROJECT, BQ_DATASET, DROP_COLS
+
+logger = logging.getLogger(__name__)
 
 
-def _write_to_bq(df: pd.DataFrame, table: str):
+def _write_to_bq(df: pd.DataFrame, table: str, append: bool = False):
+    from google.cloud import bigquery
     client = bigquery.Client(project=BQ_PROJECT)
-    job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
+    disposition = "WRITE_APPEND" if append else "WRITE_TRUNCATE"
+    job_config = bigquery.LoadJobConfig(write_disposition=disposition)
     client.load_table_from_dataframe(df, f"{BQ_DATASET}.{table}", job_config=job_config).result()
+    logger.info("Written to BQ table: %s.%s", BQ_DATASET, table)
 
 
-def run_model(df: pd.DataFrame, anchor_date: str, mode: str = "train"):
-    drop_cols = ["customer_id", "converted", "unique_views_in_cat"]
-    X = df.drop(columns=[c for c in drop_cols if c in df.columns])
+def _model_path(use_case: str) -> str:
+    return f"models/{use_case}_logistic.pkl"
+
+
+def train(df: pd.DataFrame, anchor_date: str, use_case: str):
+    X = df.drop(columns=df.columns.intersection(DROP_COLS))
     y = df["converted"]
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.3, random_state=42
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    logger.info("Train size: %d | Test size: %d", len(X_train), len(X_test))
 
-    if mode == "train":
-        pipe = Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler()),
-            ("model", LogisticRegression(max_iter=1000, class_weight="balanced")),
-        ])
-        pipe.fit(X_train, y_train)
-
-        coef_df = pd.DataFrame({
-            "anchor_date": anchor_date,
-            "feature": X_train.columns,
-            "coeff": pipe.named_steps["model"].coef_[0],
-        })
-        coef_df["odds_ratio"] = np.exp(coef_df["coeff"])
-        _write_to_bq(coef_df, "lr_feature_coef")
-
-        result = permutation_importance(
-            pipe, X_test, y_test,
-            scoring="roc_auc", n_repeats=20, random_state=42,
-        )
-        perm_df = pd.DataFrame({
-            "anchor_date": anchor_date,
-            "feature": X_test.columns,
-            "importance_mean": result.importances_mean,
-            "importance_std": result.importances_std,
-        })
-        _write_to_bq(perm_df, "lr_permutation_importance")
-
-        joblib.dump(pipe, "output/logistic.pkl")
-
-    else:
-        pipe = joblib.load("output/logistic.pkl")
+    pipe = Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler()),
+        ("model", LogisticRegression(max_iter=1000, class_weight="balanced")),
+    ])
+    pipe.fit(X_train, y_train)
+    joblib.dump(pipe, _model_path(use_case))
+    logger.info("Model saved to %s", _model_path(use_case))
 
     y_proba = pipe.predict_proba(X_test)[:, 1]
     y_pred = (y_proba > 0.5).astype(int)
 
-    predictions = pd.DataFrame({
+    # Decile conversion rate on the held-out test set
+    test_df = df.loc[X_test.index].copy()
+    test_df["score"] = y_proba
+    print(test_df.groupby(pd.qcut(test_df["score"], 10))["converted"].mean())
+
+    propensity_df = pd.DataFrame({
         "anchor_date": anchor_date,
-        "customer_id": df.loc[X_test.index, "customer_id"],
-        "actual_converted": y_test.values,
-        "predicted_converted": y_pred,
-        "predicted_probability": y_proba,
+        "customer_id": df["customer_id"],
+        "propensity_score": pipe.predict_proba(X)[:, 1],
+        "converted": df["converted"].values,
+    }).sort_values("propensity_score", ascending=False)
+    _write_to_bq(propensity_df, f"{use_case}_propensity_scores", append=True)
+
+    return y_test, y_pred, y_proba
+
+
+def score(df: pd.DataFrame, anchor_date: str, use_case: str):
+    pipe = joblib.load(_model_path(use_case))
+    logger.info("Loaded model from %s", _model_path(use_case))
+
+    X = df.drop(columns=df.columns.intersection(DROP_COLS))
+
+    propensity_df = pd.DataFrame({
+        "anchor_date": anchor_date,
+        "customer_id": df["customer_id"],
+        "propensity_score": pipe.predict_proba(X)[:, 1],
+    }).sort_values("propensity_score", ascending=False)
+    _write_to_bq(propensity_df, f"{use_case}_propensity_scores", append=True)
+    logger.info("Scored %d customers", len(propensity_df))
+
+
+def analyze(df: pd.DataFrame, anchor_date: str, use_case: str):
+    pipe = joblib.load(_model_path(use_case))
+    logger.info("Loaded model from %s", _model_path(use_case))
+
+    X = df.drop(columns=df.columns.intersection(DROP_COLS))
+    y = df["converted"]
+
+    # Coefficients sorted by absolute value
+    coef_df = pd.DataFrame({
+        "anchor_date": anchor_date,
+        "feature": X.columns,
+        "coefficient": pipe.named_steps["model"].coef_[0],
     })
-    _write_to_bq(predictions, "lr_predictions")
+    coef_df["odds_ratio"] = np.exp(coef_df["coefficient"])
+    coef_df = coef_df.reindex(
+        coef_df["coefficient"].abs().sort_values(ascending=False).index
+    )
+    _write_to_bq(coef_df, f"{use_case}_feature_coef", append=True)
 
-    # Score all customers for ranking output
-    df = df.copy()
-    df["score"] = pipe.predict_proba(X)[:, 1]
-    df = df.sort_values("score", ascending=False)
-    print(df.groupby(pd.qcut(df["score"], 10))["converted"].mean())
+    print("\n--- Feature Coefficients ---")
+    print(tabulate(coef_df.drop(columns="anchor_date"), headers="keys", tablefmt="pretty", showindex=False, floatfmt=".4f"))
 
-    return y_test, y_pred, y_proba, pipe
+    # Permutation importance
+    logger.info("Running permutation importance (n_repeats=20)...")
+    result = permutation_importance(pipe, X, y, scoring="roc_auc", n_repeats=20, random_state=42)
+    perm_df = pd.DataFrame({
+        "anchor_date": anchor_date,
+        "feature": X.columns,
+        "importance_mean": result.importances_mean,
+        "importance_std": result.importances_std,
+    }).sort_values("importance_mean", ascending=False)
+    _write_to_bq(perm_df, f"{use_case}_permutation_importance", append=True)
+
+    print("\n--- Permutation Importance ---")
+    print(tabulate(perm_df.drop(columns="anchor_date"), headers="keys", tablefmt="pretty", showindex=False, floatfmt=".4f"))
