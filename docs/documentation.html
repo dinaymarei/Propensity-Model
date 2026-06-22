@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Propensity Model — Documentation</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #222536;
+    --border: #2e3248;
+    --accent: #6c7cf0;
+    --accent2: #45c9a0;
+    --accent3: #f0a96c;
+    --accent4: #e06c75;
+    --text: #e2e4f0;
+    --muted: #8a8fa8;
+    --code-bg: #141720;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    font-size: 15px;
+  }
+
+  .layout {
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* Sidebar */
+  nav {
+    width: 240px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 28px 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  nav .logo {
+    padding: 0 20px 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+
+  nav .logo h1 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  nav .logo p {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 3px;
+  }
+
+  nav a {
+    display: block;
+    padding: 7px 20px;
+    font-size: 13px;
+    color: var(--muted);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    transition: all 0.15s;
+  }
+
+  nav a:hover {
+    color: var(--text);
+    border-left-color: var(--accent);
+    background: rgba(108,124,240,0.07);
+  }
+
+  nav .section-label {
+    padding: 16px 20px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    opacity: 0.6;
+  }
+
+  /* Main content */
+  main {
+    flex: 1;
+    padding: 48px 56px;
+    max-width: 960px;
+  }
+
+  h2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 48px 0 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    scroll-margin-top: 24px;
+  }
+
+  h2:first-of-type { margin-top: 0; }
+
+  h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--accent);
+    margin: 28px 0 10px;
+    scroll-margin-top: 24px;
+  }
+
+  h4 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent2);
+    margin: 18px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  p { margin-bottom: 12px; color: var(--text); }
+
+  ul, ol {
+    margin: 8px 0 12px 20px;
+    color: var(--text);
+  }
+
+  li { margin-bottom: 5px; }
+
+  code {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    color: var(--accent3);
+  }
+
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    margin: 12px 0 20px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #c5c8d6;
+  }
+
+  pre .comment { color: #4d5272; }
+  pre .kw { color: var(--accent); }
+  pre .str { color: var(--accent2); }
+  pre .flag { color: var(--accent3); }
+
+  /* Pipeline diagram */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 24px 0;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .pipe-step {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    min-width: 160px;
+    flex: 1;
+  }
+
+  .pipe-step .num {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .pipe-step .name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .pipe-step .file {
+    font-size: 11.5px;
+    color: var(--accent);
+    margin-top: 3px;
+    font-family: monospace;
+  }
+
+  .pipe-step .desc {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+
+  .pipe-arrow {
+    color: var(--muted);
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; margin: 12px 0 20px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  th {
+    background: var(--surface2);
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: top;
+  }
+
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  td code { font-size: 12px; }
+
+  /* Callout boxes */
+  .callout {
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13.5px;
+    border-left: 3px solid;
+  }
+
+  .callout.info {
+    background: rgba(108,124,240,0.08);
+    border-color: var(--accent);
+    color: #b0b8f0;
+  }
+
+  .callout.warn {
+    background: rgba(240,169,108,0.08);
+    border-color: var(--accent3);
+    color: #d4b08a;
+  }
+
+  .callout.tip {
+    background: rgba(69,201,160,0.08);
+    border-color: var(--accent2);
+    color: #8dd8bf;
+  }
+
+  .callout strong { color: var(--text); }
+
+  /* Badge */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  .badge.train { background: rgba(108,124,240,0.2); color: var(--accent); }
+  .badge.score { background: rgba(69,201,160,0.2); color: var(--accent2); }
+  .badge.analyze { background: rgba(240,169,108,0.2); color: var(--accent3); }
+
+  /* Feature grid */
+  .feature-group {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+  }
+
+  .feature-group h4 { margin-top: 0; }
+
+  .feature-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .tag {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 12px;
+    font-family: monospace;
+    color: var(--muted);
+  }
+
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 32px 0;
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav>
+  <div class="logo">
+    <h1>Propensity Model</h1>
+    <p>Breadfast · Egypt</p>
+  </div>
+  <div class="section-label">Overview</div>
+  <a href="#what-it-does">What It Does</a>
+  <a href="#pipeline">Pipeline Architecture</a>
+  <a href="#use-cases">Use Cases</a>
+  <div class="section-label">Data</div>
+  <a href="#sql-templates">SQL Templates</a>
+  <a href="#features">Features</a>
+  <a href="#bq-outputs">BQ Outputs</a>
+  <div class="section-label">Model</div>
+  <a href="#model-arch">Model Architecture</a>
+  <a href="#metrics">Evaluation Metrics</a>
+  <div class="section-label">Running</div>
+  <a href="#setup">Setup</a>
+  <a href="#run">Run Commands</a>
+  <a href="#modes">Modes Explained</a>
+  <div class="section-label">Config</div>
+  <a href="#config">Configuration</a>
+  <a href="#files">File Reference</a>
+</nav>
+
+<main>
+
+  <h2 id="what-it-does">What It Does</h2>
+  <p>
+    This is a <strong>customer propensity model</strong> that predicts the likelihood of a Breadfast customer converting into a new vertical — food (restaurants), beauty, or shops — within 14 days of a given anchor date.
+  </p>
+  <p>
+    The target population is customers who are <strong>active on Breadfast</strong> (placed orders recently) but have <strong>never ordered in the target vertical</strong>. The model assigns each of them a propensity score between 0 and 1, which can then be used to prioritize who to target with campaigns or coupons.
+  </p>
+
+  <div class="callout info">
+    <strong>Conversion definition:</strong> A customer "converts" if they place at least one delivered order in the target vertical within 14 days after the anchor date.
+  </div>
+
+  <hr class="divider">
+
+  <h2 id="pipeline">Pipeline Architecture</h2>
+  <p>The pipeline runs in three sequential stages:</p>
+
+  <div class="pipeline">
+    <div class="pipe-step">
+      <div class="num">Stage 1</div>
+      <div class="name">Data Loading</div>
+      <div class="file">core/render.py</div>
+      <div class="desc">Renders SQL template, runs BQ job, caches result as a BQ table.</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step">
+      <div class="num">Stage 2</div>
+      <div class="name">Model</div>
+      <div class="file">models/logistic_regression.py</div>
+      <div class="desc">Trains or loads a logistic regression. Writes propensity scores to BQ.</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-step">
+      <div class="num">Stage 3</div>
+      <div class="name">Evaluation</div>
+      <div class="file">core/accuracy.py</div>
+      <div class="desc">Computes accuracy, AUC, capture rate. Appends a row to model_results.</div>
+    </div>
+  </div>
+
+  <h3>Stage 1 — Data Loading (<code>core/render.py</code>)</h3>
+  <p>For a given <code>use_case</code> + <code>anchor_date</code> combination:</p>
+  <ol>
+    <li>Checks if a BigQuery table <code>{BQ_DATASET}.{use_case}_{anchor_date}</code> already exists.</li>
+    <li><strong>Cache hit:</strong> reads and returns the cached table directly — no SQL re-run.</li>
+    <li><strong>Cache miss:</strong> selects the right Jinja2 SQL template (tries <code>{use_case}_query</code> first, falls back to <code>query</code>), renders it with the anchor date and use-case filter, then runs it as a BigQuery <code>QueryJobConfig</code> with a destination table. Results are written directly in BQ — no data passes through Python during the write. The table is then read back into a DataFrame.</li>
+  </ol>
+
+  <div class="callout tip">
+    <strong>Re-running the same date:</strong> The second run is instant — it hits the cached BQ table and skips the SQL query entirely.
+  </div>
+
+  <h3>Stage 2 — Model (<code>models/logistic_regression.py</code>)</h3>
+  <p>Three callable functions depending on the mode:</p>
+  <ul>
+    <li><strong><code>train()</code></strong> — fits a new model and saves it to <code>models/{use_case}_logistic.pkl</code>.</li>
+    <li><strong><code>score()</code></strong> — loads a saved model and scores all customers without re-training.</li>
+    <li><strong><code>analyze()</code></strong> — loads a saved model and computes feature coefficients and permutation importance.</li>
+  </ul>
+
+  <h3>Stage 3 — Evaluation (<code>core/accuracy.py</code>)</h3>
+  <p>Only runs in <code>train</code> mode. Computes all metrics on the held-out test set (30% of data) and appends one row to <code>model_results</code> in BigQuery.</p>
+
+  <hr class="divider">
+
+  <h2 id="use-cases">Use Cases</h2>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Use Case</th>
+        <th>Target Vertical</th>
+        <th>Lookback Window</th>
+        <th>Eligibility Criteria</th>
+        <th>FP Filter</th>
+        <th>Template</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>beauty</code></td>
+        <td>Fragrances &amp; Beauty</td>
+        <td>90 days</td>
+        <td>0 vertical orders ever, ≥1 general order in last 90 days</td>
+        <td>None</td>
+        <td><code>query</code></td>
+      </tr>
+      <tr>
+        <td><code>shops</code></td>
+        <td>Shops</td>
+        <td>90 days</td>
+        <td>0 vertical orders ever, ≥1 general order in last 90 days</td>
+        <td>None</td>
+        <td><code>query</code></td>
+      </tr>
+      <tr>
+        <td><code>food</code></td>
+        <td>Restaurants</td>
+        <td>30 days</td>
+        <td>0 restaurant orders ever, ≥1 general order in last 30 days</td>
+        <td>New Cairo FPs (7 points)</td>
+        <td><code>food_query</code></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <hr class="divider">
+
+  <h2 id="sql-templates">SQL Templates</h2>
+
+  <h3>Generic template (<code>templates/query</code>) — beauty &amp; shops</h3>
+  <p>Built in 5 CTEs:</p>
+  <ol>
+    <li><strong><code>never_ordered_before</code></strong> — identifies customers with 0 vertical orders AND ≥1 order in the last 90 days.</li>
+    <li><strong><code>ordered_after</code></strong> — identifies customers who placed a vertical order in the 14-day conversion window after anchor_date. This becomes the <code>converted</code> label.</li>
+    <li><strong><code>order_agg</code></strong> — aggregates order-level metrics (order value, basket size) per customer from the 90-day lookback.</li>
+    <li><strong><code>customer_events_data</code></strong> — counts vertical product views and unique products viewed from app events in the 90-day lookback.</li>
+    <li><strong><code>customer_search_results</code></strong> — computes ratio of search sessions that led to a vertical PDP in the 90-day lookback.</li>
+  </ol>
+
+  <h3>Food template (<code>templates/food_query</code>)</h3>
+  <p>Built in 7 CTEs with a shorter 30-day lookback and food-specific features:</p>
+  <ol>
+    <li><strong><code>customer_fp_count</code></strong> — counts orders per fulfillment point per customer in the last 30 days.</li>
+    <li><strong><code>customer_primary_fp</code></strong> — identifies the FP a customer orders from most (used for filtering to New Cairo).</li>
+    <li><strong><code>events_data</code></strong> — counts how many times a customer opened the Restaurants vertical in the app in the last 30 days.</li>
+    <li><strong><code>never_ordered_before</code></strong> — identifies customers with 0 restaurant orders ever AND ≥1 order in the last 30 days. Also computes the <code>vertical_orders_after</code> conversion signal here.</li>
+    <li><strong><code>base</code></strong> / <strong><code>order_level</code></strong> — product and order level rows for the 30-day lookback window.</li>
+    <li><strong><code>coupon_sent</code></strong> — identifies customers who received a restaurant coupon in the last 30 days (joined but not currently used as a feature).</li>
+    <li><strong><code>agg_averages</code></strong> + <strong><code>product_averages</code></strong> — final per-customer aggregations of all features.</li>
+  </ol>
+
+  <div class="callout warn">
+    <strong>Important — no future leakage:</strong> All features are computed exclusively from orders within the lookback window (before anchor_date). The <code>converted</code> label is based on orders after anchor_date and is always excluded from the model's feature matrix via <code>DROP_COLS</code>.
+  </div>
+
+  <hr class="divider">
+
+  <h2 id="features">Features</h2>
+
+  <h3>Generic template (beauty &amp; shops)</h3>
+  <div class="feature-group">
+    <h4>Behavioral &amp; Frequency</h4>
+    <div class="feature-tags">
+      <span class="tag">total_orders</span>
+      <span class="tag">aov</span>
+      <span class="tag">abs</span>
+      <span class="tag">office_ratio</span>
+      <span class="tag">weekend_order_ratio</span>
+      <span class="tag">night_order_ratio</span>
+      <span class="tag">orders_with_discount_ratio</span>
+      <span class="tag">months_since_acquisition</span>
+    </div>
+  </div>
+  <div class="feature-group">
+    <h4>Spend Volatility</h4>
+    <div class="feature-tags">
+      <span class="tag">order_value_stddev</span>
+      <span class="tag">basket_size_stddev</span>
+      <span class="tag">maximum_order_value</span>
+      <span class="tag">maximum_price_point</span>
+      <span class="tag">item_spend_flexibility</span>
+    </div>
+  </div>
+  <div class="feature-group">
+    <h4>Category Affinity</h4>
+    <div class="feature-tags">
+      <span class="tag">ordered_rte</span>
+      <span class="tag">ordered_coffee</span>
+      <span class="tag">ordered_h_and_w</span>
+      <span class="tag">ordered_cleaning_baby_products</span>
+      <span class="tag">rte_ratio</span>
+      <span class="tag">coffee_ratio</span>
+      <span class="tag">health_and_wellness_ratio</span>
+    </div>
+  </div>
+  <div class="feature-group">
+    <h4>App Engagement</h4>
+    <div class="feature-tags">
+      <span class="tag">unique_views_in_cat</span>
+      <span class="tag">unique_products_viewed_in_cat</span>
+      <span class="tag">search_to_pdp_ratio</span>
+    </div>
+  </div>
+  <div class="feature-group">
+    <h4>Demographics</h4>
+    <div class="feature-tags">
+      <span class="tag">is_female</span>
+    </div>
+  </div>
+
+  <h3>Food template</h3>
+  <div class="feature-group">
+    <h4>Recency &amp; Frequency</h4>
+    <div class="feature-tags">
+      <span class="tag">days_since_last_order</span>
+      <span class="tag">orders_per_month</span>
+      <span class="tag">orders_per_week</span>
+    </div>
+  </div>
+  <div class="feature-group">
+    <h4>Basket Behavior</h4>
+    <div class="feature-tags">
+      <span class="tag">min_basket_size</span>
+      <span class="tag">max_basket_size</span>
+      <span class="tag">avg_basket_size</span>
+      <span class="tag">basket_size_stddev</span>
+      <span class="tag">last_order_basket_size</span>
+      <span class="tag">aov</span>
+      <span class="tag">max_order_value</span>
+      <span class="tag">last_order_value</span>
+      <span class="tag">order_value_stddev</span>
+      <span class="tag">maximum_item_price</span>
+      <span class="tag">item_spend_flexibility</span>
+    </div>
+  </div>
+  <div class="feature-group">
+    <h4>Food-Specific Affinity</h4>
+    <div class="feature-tags">
+      <span class="tag">bought_coffee</span>
+      <span class="tag">bought_rte</span>
+      <span class="tag">coffee_ratio</span>
+      <span class="tag">rte_ratio</span>
+      <span class="tag">last_order_contains_coffee</span>
+      <span class="tag">last_order_contains_rte</span>
+    </div>
+  </div>
+  <div class="feature-group">
+    <h4>Contextual</h4>
+    <div class="feature-tags">
+      <span class="tag">office_ratio</span>
+      <span class="tag">is_last_order_from_office</span>
+      <span class="tag">is_last_order_weekday</span>
+      <span class="tag">is_last_order_peak_hours</span>
+      <span class="tag">perc_orders_with_discount</span>
+      <span class="tag">average_cats_per_order</span>
+      <span class="tag">is_female</span>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <h2 id="bq-outputs">BigQuery Outputs</h2>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Table</th><th>Written By</th><th>Mode</th><th>Disposition</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>{use_case}_{anchor_date}</code></td>
+        <td><code>core/render.py</code></td>
+        <td><span class="badge train">all</span></td>
+        <td>TRUNCATE</td>
+        <td>Cached training data. One table per use-case × anchor-date combination. Re-runs skip this.</td>
+      </tr>
+      <tr>
+        <td><code>{use_case}_propensity_scores</code></td>
+        <td><code>models/logistic_regression.py</code></td>
+        <td><span class="badge train">train</span> <span class="badge score">score</span></td>
+        <td>APPEND</td>
+        <td>Propensity scores for all customers. Columns: <code>anchor_date</code>, <code>customer_id</code>, <code>propensity_score</code>, <code>converted</code> (train only).</td>
+      </tr>
+      <tr>
+        <td><code>model_results</code></td>
+        <td><code>core/accuracy.py</code></td>
+        <td><span class="badge train">train</span></td>
+        <td>APPEND</td>
+        <td>One row per training run with all evaluation metrics.</td>
+      </tr>
+      <tr>
+        <td><code>{use_case}_feature_coef</code></td>
+        <td><code>models/logistic_regression.py</code></td>
+        <td><span class="badge analyze">analyze</span></td>
+        <td>APPEND</td>
+        <td>Feature coefficients and odds ratios, sorted by absolute coefficient value.</td>
+      </tr>
+      <tr>
+        <td><code>{use_case}_permutation_importance</code></td>
+        <td><code>models/logistic_regression.py</code></td>
+        <td><span class="badge analyze">analyze</span></td>
+        <td>APPEND</td>
+        <td>Permutation importance (mean ± std over 20 repeats, scored by AUC).</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>All tables live in <code>bf-data-dev-qz06.test_dinayasser</code>.</p>
+
+  <hr class="divider">
+
+  <h2 id="model-arch">Model Architecture</h2>
+
+  <p>A single <strong>sklearn <code>Pipeline</code></strong> with three steps:</p>
+
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Step</th><th>Component</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td><code>SimpleImputer(strategy="median")</code></td>
+        <td>Fills missing values with the median of each feature. Handles customers with sparse order history.</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><code>StandardScaler()</code></td>
+        <td>Normalizes all features to zero mean and unit variance so regularization treats them equally.</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td><code>LogisticRegression(max_iter=1000, class_weight="balanced")</code></td>
+        <td>Linear classifier. <code>class_weight="balanced"</code> compensates for the low conversion rate (~1–5%) by upweighting positive examples.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p><strong>Train/test split:</strong> 70% train, 30% test, <code>random_state=42</code>.</p>
+  <p><strong>Saved model path:</strong> <code>models/{use_case}_logistic.pkl</code> (one file per use case).</p>
+
+  <div class="callout warn">
+    <strong>Note on accuracy:</strong> With conversion rates of 1–5%, accuracy of 95–99% is trivially achieved by predicting everyone as non-converter. Rely on <strong>AUC</strong> and <strong>capture_rate_at_10pct</strong> as the primary quality signals, not raw accuracy.
+  </div>
+
+  <hr class="divider">
+
+  <h2 id="metrics">Evaluation Metrics</h2>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Metric</th><th>What It Means</th><th>Good Range</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>auc</code></td>
+        <td>Area under the ROC curve. How well the model ranks converters above non-converters.</td>
+        <td>&gt; 0.70</td>
+      </tr>
+      <tr>
+        <td><code>capture_rate_at_10pct</code></td>
+        <td>Of all customers who actually converted, what % were in the model's top 10% by score? This is the primary business metric — the higher, the fewer people you need to target to catch most converters.</td>
+        <td>&gt; 40–50%</td>
+      </tr>
+      <tr>
+        <td><code>precision_at_k</code></td>
+        <td>Of the top 10% by score, what % actually converted?</td>
+        <td>Higher than baseline</td>
+      </tr>
+      <tr>
+        <td><code>baseline_conversion_rate</code></td>
+        <td>% of customers in the test set who converted. Use this to benchmark accuracy and precision.</td>
+        <td>Reference only</td>
+      </tr>
+      <tr>
+        <td><code>accuracy</code></td>
+        <td>% of predictions correct at 0.5 threshold. <strong>Misleading</strong> with imbalanced classes — do not use as the primary metric.</td>
+        <td>Ignore</td>
+      </tr>
+      <tr>
+        <td><code>precision</code> / <code>recall</code></td>
+        <td>At the 0.5 probability threshold. The threshold is not calibrated for imbalanced data, so these numbers are also unreliable at face value.</td>
+        <td>Context-dependent</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <hr class="divider">
+
+  <h2 id="setup">Setup</h2>
+
+  <pre><span class="comment"># Clone / navigate to the project</span>
+cd ~/Desktop/Propensity-Model
+
+<span class="comment"># Create and activate virtual environment</span>
+python3 -m venv venv
+source venv/bin/activate
+
+<span class="comment"># Install dependencies</span>
+pip install -r requirements.txt
+
+<span class="comment"># Authenticate with Google Cloud (first time only)</span>
+gcloud auth application-default login</pre>
+
+  <hr class="divider">
+
+  <h2 id="run">Run Commands</h2>
+
+  <h3>Train a new model</h3>
+  <pre>python -m core.propensity <span class="flag">--use-case</span> food <span class="flag">--anchor-date</span> 2026-03-01 <span class="flag">--mode</span> train
+python -m core.propensity <span class="flag">--use-case</span> beauty <span class="flag">--anchor-date</span> 2026-03-01 <span class="flag">--mode</span> train
+python -m core.propensity <span class="flag">--use-case</span> shops <span class="flag">--anchor-date</span> 2026-03-01 <span class="flag">--mode</span> train</pre>
+
+  <h3>Score customers with a saved model (no re-training)</h3>
+  <pre>python -m core.propensity <span class="flag">--use-case</span> food <span class="flag">--anchor-date</span> 2026-06-22 <span class="flag">--mode</span> score</pre>
+
+  <h3>Analyze feature importance</h3>
+  <pre>python -m core.propensity <span class="flag">--use-case</span> food <span class="flag">--anchor-date</span> 2026-03-01 <span class="flag">--mode</span> analyze</pre>
+
+  <div class="callout info">
+    <strong>anchor-date:</strong> Use a historical date (at least 14 days in the past) so the conversion window has elapsed and the <code>converted</code> labels are complete. Running with today's date will produce all-zero labels since no one can have "converted" yet.
+  </div>
+
+  <hr class="divider">
+
+  <h2 id="modes">Modes Explained</h2>
+
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Mode</th><th>What It Does</th><th>BQ Writes</th><th>File Writes</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge train">train</span></td>
+        <td>Loads data → fits model on 70% → evaluates on 30% → writes propensity scores for all customers → appends metrics row.</td>
+        <td><code>{use_case}_propensity_scores</code>, <code>model_results</code></td>
+        <td><code>models/{use_case}_logistic.pkl</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge score">score</span></td>
+        <td>Loads data → loads saved <code>.pkl</code> → scores all customers → writes propensity scores. No evaluation, no model update.</td>
+        <td><code>{use_case}_propensity_scores</code></td>
+        <td>None</td>
+      </tr>
+      <tr>
+        <td><span class="badge analyze">analyze</span></td>
+        <td>Loads data → loads saved <code>.pkl</code> → computes feature coefficients and permutation importance → prints tables to console → writes both to BQ.</td>
+        <td><code>{use_case}_feature_coef</code>, <code>{use_case}_permutation_importance</code></td>
+        <td>None</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <hr class="divider">
+
+  <h2 id="config">Configuration</h2>
+
+  <p>All configuration lives in <code>configs/lookup.py</code>.</p>
+
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Variable</th><th>Value</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>BQ_PROJECT</code></td>
+        <td><code>bf-data-dev-qz06</code></td>
+        <td>GCP project for all BQ reads and writes.</td>
+      </tr>
+      <tr>
+        <td><code>BQ_DATASET</code></td>
+        <td><code>test_dinayasser</code></td>
+        <td>BQ dataset where all output tables are written.</td>
+      </tr>
+      <tr>
+        <td><code>FOOD_FPS</code></td>
+        <td>7 New Cairo FP names</td>
+        <td>Fulfillment points used to restrict the food model's population. Automatically applied when <code>use_case="food"</code>.</td>
+      </tr>
+      <tr>
+        <td><code>DROP_COLS</code></td>
+        <td><code>["customer_id", "converted", "unique_views_in_cat", "primary_fp"]</code></td>
+        <td>Columns always excluded from the feature matrix. <code>converted</code> is the label; the rest are IDs or deprecated columns.</td>
+      </tr>
+      <tr>
+        <td><code>VERTICAL_LOOKUP</code></td>
+        <td>dict of use_case → SQL fragment</td>
+        <td>Injected into SQL templates as <code>{{use_case_filter}}</code> to define what counts as a vertical order.</td>
+      </tr>
+      <tr>
+        <td><code>FEATURES</code></td>
+        <td>dict of use_case → list or None</td>
+        <td>Per-use-case feature allowlist. <em>Defined but not currently applied in model code</em> — the model uses all non-dropped columns.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <hr class="divider">
+
+  <h2 id="files">File Reference</h2>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>File</th><th>Role</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>core/propensity.py</code></td><td>Entry point. Parses CLI args, calls render → model → accuracy in sequence.</td></tr>
+      <tr><td><code>core/render.py</code></td><td>BQ data loader. Handles template rendering, cache detection, and BQ query execution.</td></tr>
+      <tr><td><code>core/accuracy.py</code></td><td>Metric computation and BQ write for model_results.</td></tr>
+      <tr><td><code>models/logistic_regression.py</code></td><td>Model training, scoring, and analysis. Contains <code>train()</code>, <code>score()</code>, <code>analyze()</code>.</td></tr>
+      <tr><td><code>configs/lookup.py</code></td><td>All configuration constants. Change BQ project/dataset, FP lists, and feature allowlists here.</td></tr>
+      <tr><td><code>templates/query</code></td><td>Jinja2 SQL for beauty and shops use cases (90-day lookback).</td></tr>
+      <tr><td><code>templates/food_query</code></td><td>Jinja2 SQL for food use case (30-day lookback, FP filter, food-specific features).</td></tr>
+      <tr><td><code>models/{use_case}_logistic.pkl</code></td><td>Serialized sklearn pipeline saved after training. One file per use case.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+</main>
+</div>
+</body>
+</html>

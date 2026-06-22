@@ -10,27 +10,28 @@ logger = logging.getLogger(__name__)
 
 
 def render(anchor_date: str = date.today().isoformat(), use_case: str = None) -> pd.DataFrame:
-    table_id = f"{BQ_DATASET}.{use_case}_{anchor_date.replace('-', '_')}"
+    table_id = f"{BQ_PROJECT}.{BQ_DATASET}.{use_case}_{anchor_date.replace('-', '_')}"
     client = bigquery.Client(project=BQ_PROJECT)
 
     try:
         # Reuse cached BQ table if this use_case + anchor_date was already run
-        client.get_table(table_id)
-        customers = client.query(f"SELECT * FROM `{table_id}`").to_dataframe()
+        table = client.get_table(table_id)
+        customers = client.list_rows(table).to_dataframe(create_bqstorage_client=False)
         logger.info("Using cached BQ table: %s", table_id)
     except NotFound:
-        # Try a use-case-specific template first, fall back to the generic one
         env = Environment(loader=FileSystemLoader("templates"))
         try:
             template = env.get_template(f"{use_case}_query")
         except TemplateNotFound:
             template = env.get_template("query")
         query = template.render(**get_template_context(use_case, anchor_date))
-        customers = client.query(query).to_dataframe()
-
-        job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
-        client.load_table_from_dataframe(customers, table_id, job_config=job_config).result()
+        job_config = bigquery.QueryJobConfig(
+            destination=table_id,
+            write_disposition="WRITE_TRUNCATE",
+        )
+        client.query(query, job_config=job_config).result()
         logger.info("Results written to BQ table: %s", table_id)
+        customers = client.list_rows(table_id).to_dataframe(create_bqstorage_client=False)
 
     logger.info(
         "%d customers loaded | %d unique | %d conversions",

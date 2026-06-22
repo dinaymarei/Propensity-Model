@@ -1,5 +1,5 @@
 BQ_PROJECT = "bf-data-dev-qz06"
-BQ_DATASET = "bf-data-dev-qz06.test_dinayasser"
+BQ_DATASET = "test_dinayasser"
 
 FOOD_FPS = ["New Cairo FP #1", "New Cairo FP #2", "New Cairo FP #3", "New Cairo FP #4", "New Cairo FP #5", "New Cairo FP #6", "New Cairo FP #7"]
 
@@ -15,7 +15,7 @@ def get_template_context(use_case: str, anchor_date: str, fps: list = None) -> d
     return {
         "anchor_date": anchor_date,
         "use_case_filter": VERTICAL_LOOKUP[use_case],
-        "fps": fps,
+        "fps": fps if fps is not None else (FOOD_FPS if use_case == "food" else None),
     }
 
 # Features to include per use case. Set to None to use all available features.

@@ -1,3 +1,4 @@
+import io
 import logging
 import pandas as pd
 from sklearn.pipeline import Pipeline
@@ -18,8 +19,14 @@ def _write_to_bq(df: pd.DataFrame, table: str, append: bool = False):
     from google.cloud import bigquery
     client = bigquery.Client(project=BQ_PROJECT)
     disposition = "WRITE_APPEND" if append else "WRITE_TRUNCATE"
-    job_config = bigquery.LoadJobConfig(write_disposition=disposition)
-    client.load_table_from_dataframe(df, f"{BQ_DATASET}.{table}", job_config=job_config).result()
+    buffer = io.BytesIO()
+    df.to_parquet(buffer, index=False)
+    buffer.seek(0)
+    job_config = bigquery.LoadJobConfig(
+        write_disposition=disposition,
+        source_format=bigquery.SourceFormat.PARQUET,
+    )
+    client.load_table_from_file(buffer, f"{BQ_DATASET}.{table}", job_config=job_config).result()
     logger.info("Written to BQ table: %s.%s", BQ_DATASET, table)
 
 
@@ -45,11 +52,6 @@ def train(df: pd.DataFrame, anchor_date: str, use_case: str):
 
     y_proba = pipe.predict_proba(X_test)[:, 1]
     y_pred = (y_proba > 0.5).astype(int)
-
-    # Decile conversion rate on the held-out test set
-    test_df = df.loc[X_test.index].copy()
-    test_df["score"] = y_proba
-    print(test_df.groupby(pd.qcut(test_df["score"], 10))["converted"].mean())
 
     propensity_df = pd.DataFrame({
         "anchor_date": anchor_date,

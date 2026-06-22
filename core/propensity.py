@@ -5,6 +5,7 @@ from datetime import date
 from .render import render
 from core.accuracy import score as accuracy_score
 from models.logistic_regression import train, score, analyze
+from configs.lookup import FOOD_FPS
 
 
 def main(anchor_date: str, use_case: str, mode: str):
@@ -15,7 +16,8 @@ def main(anchor_date: str, use_case: str, mode: str):
 
     if mode == "train":
         y_test, y_pred, y_proba = train(df, anchor_date, use_case)
-        accuracy_score("model", y_test, y_pred, y_proba, anchor_date, use_case)
+        fps = FOOD_FPS if use_case == "food" else None
+        accuracy_score("model", y_test, y_pred, y_proba, anchor_date, use_case, fps=fps)
 
     elif mode == "score":
         score(df, anchor_date, use_case)

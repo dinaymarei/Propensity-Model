@@ -89,15 +89,15 @@ SELECT
   c.converted,
 
   -- Customer Profile & Demographics
-  SAFE_CAST(LEFT(socioeconomic_class, 2) AS INT64) AS socioeconomic_class,
-  is_student_parent,
-  is_baby_parent,
-  is_pet_owner,
+  -- SAFE_CAST(LEFT(socioeconomic_class, 2) AS INT64) AS socioeconomic_class,
+  -- is_student_parent,
+  -- is_baby_parent,
+  -- is_pet_owner,
   CASE WHEN gender = 'Female' THEN TRUE ELSE FALSE END AS is_female,
   COUNT(DISTINCT CASE WHEN LOWER(a.address_label_tag) != 'household' THEN o.order_id END) / COUNT(DISTINCT o.order_id) AS office_ratio,
 
   -- Customer Tenure/Lifecycle
-  DATE_DIFF('{{anchor_date}}', acq_month, MONTH) AS months_since_acquisition,
+  DATE_DIFF('{{anchor_date}}', DATE_TRUNC(cu.first_delivered_order_at_eet ,month), MONTH) AS months_since_acquisition,
 
   -- Purchase Power & Shopping Capacity
   MAX(order_value_stddev) AS order_value_stddev,
@@ -133,7 +133,7 @@ FROM final_customer_list c
 JOIN followbreadfast.l03_marts.fct_orders_products o ON c.customer_id = o.customer_id
 LEFT JOIN followbreadfast.l03_marts.dim_products p ON o.product_id = p.product_id
 LEFT JOIN followbreadfast.l03_marts.dim_addresses a ON a.address_id = o.address_id
-LEFT JOIN bf-data-dev-qz06.test_mennaeisawy.customers_segmentation_attributes cs ON cs.customer_id = o.customer_id
+LEFT JOIN followbreadfast.l03_marts.dim_customers cu ON cu.customer_id = c.customer_id
 LEFT JOIN customer_events_data e ON e.customer_id = c.customer_id
 LEFT JOIN customer_search_results s ON s.customer_id = c.customer_id
 LEFT JOIN price_volatility pv ON pv.customer_id = c.customer_id
