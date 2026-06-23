@@ -97,8 +97,7 @@ SELECT
   COUNT(DISTINCT CASE WHEN LOWER(a.address_label_tag) != 'household' THEN o.order_id END) / COUNT(DISTINCT o.order_id) AS office_ratio,
 
   -- Customer Tenure/Lifecycle
-  DATE_DIFF('{{anchor_date}}', DATE_TRUNC(cu.first_delivered_order_at_eet ,month), MONTH) AS months_since_acquisition,
-
+  DATE_DIFF(DATE('{{anchor_date}}'), DATE_TRUNC(cu.first_delivered_order_at_eet ,month), MONTH) AS months_since_acquisition,
   -- Purchase Power & Shopping Capacity
   MAX(order_value_stddev) AS order_value_stddev,
   MAX(basket_size_stddev) AS basket_size_stddev,
